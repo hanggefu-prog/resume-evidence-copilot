@@ -1,53 +1,38 @@
-# Demo script
+# 演示脚本
 
-Two things to produce, both from the same walkthrough: four screenshots for the README, and a
-~2-3 minute Loom recording. Do the screenshots first (also serves as your dry run for the video).
+沿同一条操作路线，先为 README 截取四张图，再录制一段约 2～3 分钟的 Loom 视频。截图时可以顺便确认演示数据已加载、模型调用能正常返回。
 
-## Setup
+## 准备演示环境
+
+首次运行请先按 [README 的本地启动说明](../README.md#本地启动) 配置后端环境变量、启用向量扩展并创建数据表。已完成初始化的环境可以直接启动：
 
 ```bash
-./scripts/setup-env.sh
 docker compose up -d postgres backend frontend
-docker compose run --rm backend python -m seed.seed_data   # only if the demo DB is empty
+# 仅在演示数据库为空时导入示例数据
+docker compose run --rm backend python -m seed.seed_data
 ```
 
-Open http://localhost:3000.
+在浏览器中打开[本地招聘工作台](http://localhost:3000)。
 
-## Screenshots (save to `docs/screenshots/`)
+## 截取四个操作画面
 
-1. **`dashboard.png`** — the home page (`/`). Shows candidate/job counts and the observability
-   summary card. Wait for it to finish loading real numbers before capturing.
-2. **`job-detail.png`** — click into any job with a good spread of candidates (e.g. "Backend
-   Engineer at Acme AI" if it's still seeded). Capture the ranked-candidates list with the
-   rerank scores visible.
-3. **`score-dialog.png`** — on that same job page, click "Score" on the top-ranked candidate.
-   Wait ~20-30s for the real LLM call (free-tier latency — this is expected). Capture the dialog
-   once the score + reasoning renders.
-4. **`interview-questions.png`** — click "Interview Qs" on the same candidate. Wait for the
-   response, capture the 5 questions.
+将截图保存到 `docs/screenshots/`。下面保留了界面上的英文按钮名称，方便对照操作。
 
-## Loom recording — talking points
+| 文件名 | 操作与截图内容 |
+| --- | --- |
+| `dashboard.png` | 打开首页 `/`，等候选人数、岗位数和运行监控摘要加载完成后截图。 |
+| `job-detail.png` | 打开一个包含多位候选人的岗位，例如示例数据中的 Acme AI 后端工程师岗位。截取候选人列表，让排名和重排分数都清晰可见。 |
+| `score-dialog.png` | 在同一页面点击排名第一的候选人旁的 **Score**（评分）。免费模型通常需要约 20～30 秒。等分数和评分理由都出现后，再截取弹窗。 |
+| `interview-questions.png` | 为同一候选人点击 **Interview Qs**（面试问题），等五个问题完整显示后截图。 |
 
-Keep it tight, narrate over the same click path:
+## 录屏顺序与参考讲解词
 
-1. **Open on the dashboard.** *"This is a full-stack AI recruitment tool — FastAPI backend,
-   Next.js frontend, real RAG search against a Postgres/pgvector store, all running against a
-   free-tier LLM to keep it a $0-cost demo."*
-2. **Upload a CV** (paste text or a real file) live. *"CVs and job descriptions get parsed into
-   structured JSON by an LLM — schema-validated, with an automatic repair-retry loop, since
-   free-tier models aren't as reliable at strict JSON as GPT-4 or Claude."*
-3. **Go to a job, show the ranked candidates.** *"This is RAG in practice: pgvector does the
-   semantic retrieval, then a re-ranking layer corrects for skill overlap and experience — not
-   just 'reads similar,' but 'actually qualifies.'"*
-4. **Click Score.** While it's loading: *"Free-tier models mean occasional 20-30 second waits and
-   occasional rate-limiting — both handled explicitly with retry/backoff, not glossed over."*
-   Then show the result: *"Transparent reasoning, not a black-box number."*
-5. **Click Interview Qs.** *"Targeted at this candidate's specific gaps against this specific
-   role, not generic questions."*
-6. **Open `/observability`.** *"Every LLM call is logged — tokens, latency, success rate. This is
-   the cost/observability layer real production AI systems need, and it's the same layer that'd
-   catch a cost blowup if this moved to a paid model."*
-7. **Close on the repo.** *"58 tests, CI on GitHub Actions, fully Dockerized, architecture and
-   cost/safety tradeoffs written up in the README — link in the description."*
+1. **从工作台首页开始。** “这是一个 AI 招聘助手。前端用 Next.js，后端用 FastAPI。候选人和岗位存放在 PostgreSQL 中，由 pgvector 提供向量检索。演示使用免费的大语言模型。”
+2. **现场录入简历。** 粘贴简历正文或上传文件。“模型把简历和岗位描述解析成结构化 JSON。后端会校验字段，如果格式有误，就把具体错误发回模型，请它修正。”
+3. **打开岗位，展示候选人排名。** “pgvector 先找出语义上最接近这个岗位的候选人，再结合必备技能和工作年限调整排名。” 可以选一位候选人，指给观众看哪些技能与岗位要求吻合。
+4. **点击 Score。** 等待时说明：“免费模型一次评分可能要等 20～30 秒。如果上游限流，后端会按间隔重试。” 结果出现后，展示总分，并选一条评分理由说明模型如何判断匹配程度。
+5. **点击 Interview Qs。** “这些问题是针对这位候选人和当前岗位生成的。” 从结果中选一道题，说明面试官可以用它核实哪项经验或技能。
+6. **打开运行监控页 `/observability`。** “这里能看到模型调用的 token 用量、耗时和成功率。以后切换到付费模型时，也可以用这些记录分析哪些操作消耗最多。”
+7. **回到项目仓库。** 展示 GitHub Actions 中的测试、Docker 启动说明，以及 README 下方的架构和成本安全文档。结尾提醒观众可以在视频简介里找到仓库链接。
 
-Upload to Loom, add the link to the README's Status section once done.
+录制完成后上传到 Loom，并把视频链接添加到 README。

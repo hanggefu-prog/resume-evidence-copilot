@@ -1,56 +1,25 @@
-# Cost & safety notes
+# 成本、可靠性与安全说明
 
-Honest accounting of what this costs to run, what could go wrong, and what's deliberately
-simplified. Written to be read by a hiring manager, not just a checklist.
+## 运行成本
 
-## Cost
+- **大语言模型调用。** 演示配置使用 OpenRouter 上模型名以 `:free` 结尾的免费模型，调用受上游配额限制。项目在默认模型 `openai/gpt-oss-20b:free` 上观察到的单次耗时约为 20～30 秒。`GET /observability/stats` 提供调用统计，可按调用类型查看 token 消耗。切换付费模型后，可以结合模型单价估算费用。
+- **向量生成。** 每次上传简历或岗位描述都需要生成检索向量。`sentence-transformers` 在本地运行 `all-MiniLM-L6-v2`，无需为每次向量计算支付 API 费用。
+- **数据库。** 演示部署方案让多个应用共用一个 Supabase 项目，各应用使用独立的 PostgreSQL schema，以节省免费项目配额。多租户部署若需要更强的数据隔离，可为每个租户使用独立数据库或项目。
 
-- **LLM calls**: OpenRouter free-tier models (`:free` suffix) — $0 per call, rate-limited by the
-  underlying provider rather than billed. `GET /observability/stats` tracks token usage per call
-  type so the moment this swaps to a paid model, real cost is visible immediately rather than
-  discovered on a bill. Average observed latency on the current default model
-  (`openai/gpt-oss-20b:free`) is ~20-30s/call — free-tier tradeoff, not a bug.
-- **Embeddings**: local `sentence-transformers` (`all-MiniLM-L6-v2`), not an API. Zero per-call
-  cost, no external dependency for the single most call-heavy operation (every candidate/job
-  gets embedded on upload).
-- **Database**: single shared Supabase project across this and other portfolio apps, isolated by
-  Postgres schema per app. This is a deliberate cost/quota tradeoff (Supabase free tier caps
-  active projects) — in a real multi-tenant product this would be a bigger isolation boundary
-  (separate database or project per tenant), and that's flagged here rather than glossed over.
+## 可靠性
 
-## Reliability
+- **模型输出校验。** 解析器检查 JSON 格式及字段约束。校验失败时，将错误反馈给模型，连同首次调用最多尝试 3 次。完整流程见[系统架构说明](architecture.md)。
+- **限流与临时故障。** 收到上游的 `429`、`502`、`503` 或 `504` 时，客户端会按退避策略重试，并遵循 `Retry-After`。3 次尝试均失败后，调用方收到 HTTP `503`，可以稍后再试。
+- **测试数据隔离。** 开发中曾出现运行 `pytest` 意外清除演示数据的问题。现在 API 测试使用专用数据库 `recruitment_copilot_test`，清理测试数据时不会影响演示库。
 
-- **Malformed LLM output**: schema-validated with a repair-retry loop (up to 3 attempts, the
-  validation error is fed back to the model). See `docs/architecture.md`.
-- **Upstream rate-limiting**: transport-level retry with backoff on 429/502/503/504, honoring
-  `Retry-After`. After 3 attempts, surfaces as a `503` to the caller — an explicit "try again"
-  signal, not a silent failure or a crash.
-- **Test isolation**: tests run against a dedicated `recruitment_copilot_test` database, never
-  the dev/demo one. (This was a real bug caught during development — see git history — where
-  running `pytest` was silently wiping seeded demo data.)
+## 匹配规则与评估边界
 
-## Known simplifications (stated proactively, not hidden)
+- **重排采用加权规则。** 向量相似度占 50%，必备技能覆盖度占 30%，最低工作年限匹配度占 20%。交叉编码器会增加推理成本和延迟，目前缺少人工标注的检索相关性数据来衡量它能带来多大提升。
+- **工作经验按总年限计算。** 未达到岗位最低年限时，按候选人总年限占要求年限的比例计分；达到或超过要求即得满分。岗位没有最低年限要求时，所有候选人的这一项均为满分。
+- **评估集用于发现明显偏差。** `backend/eval/dataset.py` 包含 12 组人工标注的候选人和岗位配对。这些样例可以帮助发现评分异常，样本量不足以支持总体准确率结论。
 
-- **Re-ranking is a heuristic, not a cross-encoder model.** Vector similarity + skill overlap +
-  minimum experience fit, weighted 50/30/20. A cross-encoder is the standard upgrade path; skipped
-  here because there's no labeled relevance data yet to prove it would outperform the heuristic,
-  and it adds a real inference-cost/latency dependency for an unproven gain.
-- **Experience fit uses total years.** Candidates earn proportional credit up to the job's
-  minimum and full credit thereafter. A job with no minimum gives all candidates full credit.
-- **Eval harness is a sanity check, not a benchmark.** 12 hand-labeled candidate/job pairs
-  (`backend/eval/dataset.py`). This catches obviously-broken scoring; it is not statistically
-  large enough to claim a validated accuracy number, and isn't presented as one.
+## 安全与访问控制
 
-## Safety
-
-- **Prompt injection surface**: CVs and job descriptions are attacker-controllable free text fed
-  directly into an LLM prompt. Current mitigation is limited to strict schema validation on the
-  *output* (a malicious CV can't make the parser return arbitrary unstructured content — it still
-  has to fit `CandidateParsed`). There is no input-side sanitization or instruction-boundary
-  hardening yet; for a real production deployment accepting public CV uploads, that's the next
-  thing to build, not an afterthought.
-- **File upload limits**: 5MB cap, extension allowlist (`.pdf`, `.txt`, `.md`) enforced in
-  `file_extraction.py` — rejects anything else with a clear 422, not a silent failure.
-- **No auth yet**: this is a portfolio demo, not a deployed multi-user product. Every endpoint is
-  open. Adding auth (Supabase auth, given the stack) is the first thing that would need to happen
-  before this touched real candidate data.
+- **提示注入。** 用户可自行填写简历和岗位描述，其中可能夹带影响模型判断的指令。目前后端对输出执行严格的结构校验，例如要求简历符合 `CandidateParsed`。格式正确的字段仍可能包含受恶意指令影响的内容。向公众开放上传前，还需处理不可信输入，并加强用户文本与系统指令之间的隔离。
+- **文件上传。** 简历文件上限为 5 MiB，超限返回 HTTP `413`。`file_extraction.py` 仅接受 `.pdf`、`.txt` 和 `.md`，不支持的类型返回 HTTP `422`。
+- **身份认证。** 当前演示版本的 API 端点均可直接访问。接入真实候选人数据前，需要先添加身份认证，例如使用 Supabase Auth，并限制数据访问权限。

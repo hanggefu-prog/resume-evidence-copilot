@@ -1,25 +1,25 @@
-# Architecture
+# 系统架构说明
 
-## System overview
+## 系统概览
 
 ```mermaid
 flowchart TB
-    subgraph Client
-        UI["Next.js dashboard<br/>(App Router, shadcn/ui)"]
+    subgraph Client["客户端"]
+        UI["Next.js 招聘工作台<br/>App Router、shadcn/ui"]
     end
 
-    subgraph Backend["FastAPI backend"]
+    subgraph Backend["FastAPI 后端"]
         direction TB
-        Routers["Routers<br/>candidates · jobs · scoring · search · interviews · observability"]
-        Services["Services<br/>cv_parser · jd_parser · scorer · search · interview_questions"]
-        Parsing["parsing.py<br/>repair-retry loop + schema validation"]
-        LLMClient["llm_client.py<br/>OpenRouter provider + retry/backoff"]
-        Embeddings["embeddings.py<br/>local sentence-transformers"]
-        CostTracker["cost_tracker.py<br/>every LLM call logged"]
+        Routers["API 路由<br/>候选人、岗位、评分、检索、面试、运行监控"]
+        Services["业务服务<br/>cv_parser · jd_parser · scorer · search · interview_questions"]
+        Parsing["parsing.py<br/>校验模型输出，失败时请求修正"]
+        LLMClient["llm_client.py<br/>调用 OpenRouter，按退避策略重试"]
+        Embeddings["embeddings.py<br/>使用 sentence-transformers 在本地生成向量"]
+        CostTracker["cost_tracker.py<br/>记录大语言模型调用"]
     end
 
-    subgraph External
-        OpenRouter["OpenRouter<br/>(free-tier LLMs)"]
+    subgraph External["外部服务"]
+        OpenRouter["OpenRouter<br/>免费模型"]
     end
 
     subgraph Storage["PostgreSQL + pgvector"]
@@ -30,7 +30,7 @@ flowchart TB
         LLMLogs[(llm_call_logs)]
     end
 
-    UI -->|REST, CORS| Routers
+    UI -->|REST 请求，支持 CORS| Routers
     Routers --> Services
     Services --> Parsing
     Parsing --> LLMClient
@@ -42,61 +42,37 @@ flowchart TB
     Routers --> Scores
     Routers --> AuditLogs
     CostTracker --> LLMLogs
-    Services -->|cosine similarity search| Candidates
-    Services -->|cosine similarity search| Jobs
+    Services -->|余弦相似度检索| Candidates
+    Services -->|余弦相似度检索| Jobs
 ```
 
-## Request flow: uploading a CV
+## 一份简历如何入库
 
-1. `POST /candidates` or `/candidates/upload` (frontend paste-text form or file upload).
-2. Router extracts text (`file_extraction.py` for PDF/txt/md) and calls `cv_parser.parse_cv`.
-3. `parse_cv` → `parsing.parse_structured`: sends a system prompt + the raw text to the LLM
-   provider, validates the JSON response against the `CandidateParsed` Pydantic schema. On
-   invalid JSON or a schema violation, the validation error is fed back to the model and
-   retried (up to 3 attempts) — free-tier models are meaningfully less reliable at strict JSON
-   than GPT-4/Claude, so this is a deliberate, budgeted-for reliability layer, not a patch.
-4. On success: candidate row stored with `parsed` (JSONB) and `embedding` (pgvector, from the
-   local `sentence-transformers` model — zero per-call cost).
-5. Every LLM call (success or failure, including each repair attempt) is logged via
-   `cost_tracker.record_llm_call`: tokens, latency, attempt count, success/failure.
-6. An `audit_logs` row records the parse event.
+1. 用户粘贴简历文本时，前端调用 `POST /candidates`。上传文件时，前端调用 `POST /candidates/upload`。
+2. 对于 PDF、TXT 和 Markdown 文件，后端先通过 `file_extraction.py` 提取文本。两种提交方式都由 `cv_parser.parse_cv` 解析简历正文。
+3. `parse_cv` 调用 `parsing.parse_structured`，将系统提示词和简历原文发送给大语言模型，再用 Pydantic 模型 `CandidateParsed` 校验返回的 JSON。如果 JSON 无法解析，或字段不符合约束，解析器会把错误信息发回模型，请它修正。含首次调用在内，最多尝试 3 次。
+4. 解析成功后，后端将结构化结果写入候选人记录的 `parsed` 字段（JSONB），并将本地模型生成的向量写入 `embedding` 字段（pgvector）。
+5. 每次模型调用都会通过 `cost_tracker.record_llm_call` 记录 token 用量、耗时、尝试次数和成功状态，修正输出时的调用也计入其中。
+6. 后端将本次解析事件写入 `audit_logs`，便于追溯。
 
-## RAG search + re-rank
+## 语义检索与重排
 
-Two-stage design (`services/search.py`):
+`services/search.py` 分两步为岗位查找候选人，或为候选人查找岗位。
 
-1. **Retrieval**: pgvector cosine-distance search narrows the full candidate/job pool to
-   `RETRIEVAL_K` (20) nearest neighbors. This is the actual "R" in RAG — it's what makes search
-   scale past a full-table LLM scan.
-2. **Re-rank**: within that pool, results are re-ordered using a heuristic combining vector
-   similarity (50%), required-skill overlap (30%), and minimum experience fit (20%). Raw embedding
-   similarity alone can't tell a candidate who merely *reads* similar to a JD from one who
-   actually has the required skills — the heuristic corrects for that.
+1. **向量召回。** pgvector 按余弦距离从全部记录中取出最接近的 20 条（`RETRIEVAL_K`）。后续排序只需处理这批结果，无需让模型逐条读取整张表。
+2. **匹配度重排。** 综合分由向量相似度（50%）、必备技能覆盖度（30%）和最低工作年限匹配度（20%）组成。即使两份简历与岗位描述的措辞相近，满足更多必备技能的候选人也能在这一轮获得更高的技能分。
 
-A cross-encoder model is the standard production upgrade for stage 2. It's intentionally not
-built here: it's an extra model dependency and inference cost with no labeled relevance data yet
-to prove it beats the heuristic. Documented as a known simplification, not a hidden gap.
+另一种重排方式是使用交叉编码器，对每组候选人和岗位联合打分。这会增加模型依赖和推理耗时。目前缺少用于比较检索排序效果的人工相关性标注，因此项目沿用加权规则。
 
-## Why a repair-retry loop instead of a bigger/paid model
+## 模型输出修正与请求重试
 
-The project deliberately runs on OpenRouter's free-tier models to keep this a $0-cost portfolio
-piece. That means occasional malformed JSON and occasional upstream rate-limiting (429s from the
-model provider, not this app). Both are handled explicitly:
+项目使用 OpenRouter 免费模型控制演示费用。后端分别处理两类常见故障：
 
-- **Malformed/invalid JSON** → `parsing.py` repair loop (up to 3 attempts, error fed back to the
-  model).
-- **Upstream rate-limiting (429/5xx)** → `llm_client.py` transport-level retry with backoff,
-  honoring `Retry-After`. After 3 attempts it raises `LLMProviderUnavailableError`, which routers
-  turn into a `503` — an honest "try again," not a crash.
+- **响应格式错误。** 如果模型返回的 JSON 无法解析或不符合字段约束，`parsing.py` 会把具体错误反馈给模型，最多尝试 3 次。
+- **上游服务暂时不可用。** 遇到限流或特定服务端错误时，`llm_client.py` 会延长重试间隔，并遵循上游返回的 `Retry-After`。连续 3 次尝试失败后，客户端抛出 `LLMProviderUnavailableError`，路由返回 HTTP `503`，提示调用方稍后重试。
 
-## Testing strategy
+## 测试与评估
 
-- **Unit tests** (parsers, scorer, search math, LLM client retry logic): run fully offline against
-  `MockLLMProvider` / `FakeHashEmbedding` — no network, no Postgres.
-- **API tests**: run against a real Postgres + pgvector instance (`recruitment_copilot_test`, a
-  database dedicated to tests — never the dev/demo database, so running `pytest` can't wipe seed
-  data).
-- **Eval harness** (`backend/eval/`): the one place that intentionally hits the *real* LLM. 12
-  hand-labeled candidate/job pairs scored against an expected fit tier. Run manually, not in CI —
-  it's a sanity check against obviously-wrong scoring, not a statistically significant benchmark
-  (12 cases is too small to claim more than that).
+- **单元测试**覆盖解析、评分、排序计算和模型客户端的重试逻辑。测试使用 `MockLLMProvider` 和 `FakeHashEmbedding`，可以离线运行，无需连接 PostgreSQL。
+- **API 测试**使用装有 pgvector 的 PostgreSQL 实例。专用数据库 `recruitment_copilot_test` 将测试数据与开发、演示数据隔离。
+- **模型评估**位于 `backend/eval/`，需手动运行，会调用真实模型。评估将 12 组人工标注的候选人和岗位配对与预期匹配等级比较，用于发现明显的评分偏差。样本规模不足以估计整体准确率，因此这项评估单独运行，不纳入 CI。
