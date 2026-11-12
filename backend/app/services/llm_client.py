@@ -28,6 +28,10 @@ class LLMProviderUnavailableError(Exception):
     reliability tradeoff we've documented and accepted."""
 
 
+class LLMAuthenticationError(LLMProviderUnavailableError):
+    """Provider credentials cannot authorize inference."""
+
+
 @dataclass
 class LLMUsage:
     prompt_tokens: int = 0
@@ -61,11 +65,8 @@ class OpenRouterProvider(LLMProvider):
         self.model = model or settings.llm_model
 
     def complete(self, system_prompt: str, user_prompt: str) -> LLMResult:
-        if not self.api_key:
-            raise RuntimeError(
-                "OPENROUTER_API_KEY is not set. Add it to ~/.secrets/acore.env and "
-                "run scripts/setup-env.sh."
-            )
+        if not self.api_key or not self.api_key.isascii() or any(c.isspace() for c in self.api_key):
+            raise LLMAuthenticationError("请在 backend/.env 中配置有效的 OPENROUTER_API_KEY，并重新创建后端容器。")
 
         last_error: httpx.HTTPStatusError | None = None
         for attempt in range(1, MAX_TRANSPORT_RETRIES + 1):
@@ -99,6 +100,10 @@ class OpenRouterProvider(LLMProvider):
                 f"OpenRouter model '{self.model}' unavailable after {MAX_TRANSPORT_RETRIES} attempts: {last_error}"
             )
 
+        if response.status_code == 401:
+            raise LLMAuthenticationError(
+                "OpenRouter 拒绝了模型调用（401）。请检查账号和 backend/.env 中的 OPENROUTER_API_KEY，更新后重新创建后端容器。"
+            )
         response.raise_for_status()
         data = response.json()
         content = data["choices"][0]["message"]["content"]

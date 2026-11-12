@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { PageHeading } from "@/components/page-heading";
 import { RequirementEvidenceDialog } from "@/components/requirement-evidence";
+import { InterviewPrepPanel } from "@/components/interview-prep-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -121,6 +122,7 @@ export default function JobDetailPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <RequirementEvidenceDialog key={id} candidate={c} jobId={id} />
+                <InterviewPrepPanel key={`prep-${id}`} candidateId={c.id} name={c.parsed?.name ?? "候选人"} jobId={id} />
                 <Button size="sm" variant="secondary" disabled={pendingId === c.id} onClick={() => runScore(c)}>
                   {pendingId === c.id ? "…" : "Score"}
                 </Button>

@@ -2,7 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import candidates, health, interviews, jobs, observability, scoring, search
+from app.routers import (
+    candidates,
+    health,
+    interview_prep,
+    interviews,
+    jobs,
+    observability,
+    scoring,
+    search,
+)
 
 app = FastAPI(title="AI Recruitment Copilot", version="0.1.0")
 
@@ -21,3 +30,4 @@ app.include_router(observability.router)
 app.include_router(scoring.router)
 app.include_router(interviews.router)
 app.include_router(search.router)
+app.include_router(interview_prep.router)

@@ -68,6 +68,29 @@ export interface RequirementEvidence {
   quote: string | null;
 }
 
+export interface PrepReview {
+  decision: "pending" | "ask" | "skip";
+  note: string;
+}
+
+export interface PrepEdits {
+  reviews: Record<string, PrepReview>;
+  manual_questions: string[];
+}
+
+export interface InterviewPrep {
+  id: string;
+  version: number;
+  evidence: RequirementEvidence[];
+  edits: PrepEdits;
+  outline: {
+    text: string;
+    source: "generated" | "manual";
+    requirement_id: number | null;
+    reason: string | null;
+  }[] | null;
+}
+
 export interface ObservabilityStats {
   total_calls: number;
   success_rate: number | null;
@@ -106,6 +129,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  prep: {
+    open: (candidate: string, job: string) =>
+      request<InterviewPrep>(`/interview-prep/open/${candidate}/${job}`, { method: "POST" }),
+    save: (id: string, version: number, edits: PrepEdits) =>
+      request<InterviewPrep>(`/interview-prep/${id}`, {
+        method: "PUT", body: JSON.stringify({ version, edits }),
+      }),
+    generate: (id: string, version: number) =>
+      request<InterviewPrep>(`/interview-prep/${id}/generate`, {
+        method: "POST", body: JSON.stringify({ version }),
+      }),
+  },
   candidates: {
     list: () => request<CandidateRead[]>("/candidates"),
     get: (id: string) => request<CandidateRead>(`/candidates/${id}`),

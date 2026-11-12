@@ -5,7 +5,7 @@ must be retried, not surfaced as a 500."""
 import httpx
 import pytest
 
-from app.services.llm_client import LLMProviderUnavailableError, OpenRouterProvider
+from app.services.llm_client import LLMAuthenticationError, LLMProviderUnavailableError, OpenRouterProvider
 
 
 def _fake_response(status_code: int, json_body: dict, retry_after: str = "0") -> httpx.Response:
@@ -60,7 +60,7 @@ def test_non_retryable_error_raises_immediately(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
 
     provider = OpenRouterProvider(api_key="test-key", model="test-model")
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(LLMAuthenticationError, match="401"):
         provider.complete("system", "user")
 
     assert len(calls) == 1  # no retry for a non-transient error
