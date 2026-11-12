@@ -40,6 +40,8 @@
 
 评分与生成内容用于辅助人工审阅，不应直接作为录用或淘汰结论。
 
+在已确认的提纲底部点击 **根据提纲生成面试问题**。每个条目得到一道主问题和两条按回答选用的追问，手写主问题逐字保留。提问稿自动保存，再次打开时点击 **查看面试提问稿** 即可读取。空提纲不会发起模型调用。
+
 ## 技术架构
 
 ```mermaid
@@ -134,9 +136,10 @@ docker compose build backend
 docker compose exec -T postgres psql -U postgres -d recruitment_copilot -c "CREATE EXTENSION IF NOT EXISTS vector;"
 docker compose run --rm --no-deps backend python -c "from app.db import Base, engine; import app.models; Base.metadata.create_all(engine)"
 docker compose run --rm --no-deps backend python -m app.workflows.interview_prep
+docker compose run --rm --no-deps backend alembic upgrade head
 ```
 
-已有数据库升级时，请先重新构建后端镜像，再执行上面的两条 `docker compose run` 命令。第一条补建业务表，第二条初始化 LangGraph 的 PostgreSQL 检查点表，支持在人工复核后恢复。两条命令均可重复执行。目前仓库包含 Alembic 配置，已有业务表的结构变更仍需单独迁移。
+已有数据库升级时，请先重新构建后端镜像，再依次执行上面的三条 `docker compose run` 命令，补建业务表、初始化检查点并应用字段迁移。已有提纲可直接生成提问稿。
 
 ### 4. 启动完整应用
 
@@ -265,7 +268,7 @@ AI Recruitment Copilot/
 │   ├── tests/               # 单元测试与接口测试
 │   ├── eval/                # 人工标注样例与模型效果评估
 │   ├── seed/                # 演示数据生成
-│   └── alembic/             # 数据库迁移配置，尚无版本脚本
+│   └── alembic/             # 数据库迁移配置和版本脚本
 ├── frontend/
 │   ├── app/                 # 页面、布局和全局样式
 │   ├── components/          # 导航、页头和 UI 组件

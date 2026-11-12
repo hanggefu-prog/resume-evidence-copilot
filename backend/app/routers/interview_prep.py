@@ -16,6 +16,7 @@ from app.schemas.interview_prep import Edits, PrepRead, Review, Revision, SaveDr
 from app.schemas.job import JobParsed
 from app.services.cost_tracker import record_llm_call
 from app.services.evidence import compare_requirements, required_items
+from app.services.interview_guide import generate_guide
 from app.services.interview_prep_questions import questions_for_evidence
 from app.services.llm_client import LLMAuthenticationError, LLMProvider, LLMProviderUnavailableError
 from app.services.parsing import ParsingFailedError
@@ -182,4 +183,34 @@ def finish_draft(
         raise HTTPException(422, "请填写或移除空白手写题")
     row.outline = run_graph(db, row, llm, resume=True)["outline"]
     row.version += 1
+    return commit_snapshot(db, row)
+
+
+@router.post("/{prep_id}/question-guide", response_model=PrepRead)
+def create_guide(
+    prep_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    llm: Annotated[LLMProvider, Depends(get_llm)],
+):
+    row = locked_draft(db, prep_id)
+    if row.question_guide is not None:
+        return row
+    if not row.outline:
+        raise HTTPException(422, "请先生成包含问题的面试提纲")
+    started = perf_counter()
+    try:
+        result = generate_guide(llm, row.outline, row.evidence, row.edits)
+    except ParsingFailedError as exc:
+        record_llm_call(db, purpose="interview_guide", provider=llm.provider_name, model=llm.model,
+                        usage=exc.usage, attempts=exc.attempts, success=False,
+                        latency_ms=(perf_counter() - started) * 1000, error="Invalid guide")
+        db.commit()
+        raise HTTPException(422, "提问稿格式有误，请重新生成") from exc
+    except LLMProviderUnavailableError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    row.question_guide = [group.model_dump() for group in result.value.groups]
+    row.version += 1
+    record_llm_call(db, purpose="interview_guide", provider=llm.provider_name, model=llm.model,
+                    usage=result.usage, attempts=result.attempts, success=True,
+                    latency_ms=(perf_counter() - started) * 1000)
     return commit_snapshot(db, row)

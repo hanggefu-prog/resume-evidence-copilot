@@ -19,3 +19,4 @@ class InterviewPrep(Base):
     evidence = Column(JSONB, nullable=False, default=list)
     edits = Column(JSONB, nullable=False, default=dict)
     outline = Column(JSONB(none_as_null=True), nullable=True)
+    question_guide = Column(JSONB(none_as_null=True), nullable=True)

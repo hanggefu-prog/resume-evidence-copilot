@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type InterviewPrep, type PrepEdits, type PrepReview } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { InterviewQuestionGuide } from "@/components/interview-question-guide";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const labels = { supported: "已有原文支持", needs_review: "证据待核实", not_mentioned: "简历未提及" };
@@ -14,6 +15,7 @@ export function InterviewPrepPanel({candidateId, jobId, name}: {candidateId: str
   const [draft, setDraft] = useState<InterviewPrep | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const saved = useRef<InterviewPrep | null>(null);
@@ -31,6 +33,7 @@ export function InterviewPrepPanel({candidateId, jobId, name}: {candidateId: str
   }, []);
 
   async function load() {
+    setShowGuide(false);
     setOpen(true);
     setBusy(true);
     setError("");
@@ -104,6 +107,21 @@ export function InterviewPrepPanel({candidateId, jobId, name}: {candidateId: str
     } finally { setBusy(false); }
   }
 
+  async function viewGuide() {
+    if (!draft || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const data = draft.question_guide ? draft : await api.prep.questionGuide(draft.id);
+      saved.current = data;
+      latest.current = data.edits;
+      setDraft(data);
+      setShowGuide(true);
+      if (scroll.current) scroll.current.scrollTop = 0;
+    } catch (err) { setError(message(err)); }
+    finally { setBusy(false); }
+  }
+
   const supported = draft?.evidence.flatMap((row, index) => row.status === "supported" ? [{row, index}] : []) ?? [];
   const pending = Object.values(draft?.edits.reviews ?? {}).filter(row => row.decision === "pending").length;
   return <>
@@ -113,7 +131,7 @@ export function InterviewPrepPanel({candidateId, jobId, name}: {candidateId: str
     }}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{draft?.outline ? "面试提纲" : "根据简历证据准备面试"}</DialogTitle>
+          <DialogTitle>{showGuide ? "面试提问稿" : draft?.outline ? "面试提纲" : "根据简历证据准备面试"}</DialogTitle>
           <DialogDescription>{name}</DialogDescription>
         </DialogHeader>
         {error && <p role="alert" className="text-destructive">{error}</p>}
@@ -122,7 +140,7 @@ export function InterviewPrepPanel({candidateId, jobId, name}: {candidateId: str
         {busy && <p role="status">{draft ? "正在处理…" : "正在读取草稿或核对简历证据…"}</p>}
         {draft && <div ref={scroll} className="max-h-[65dvh] space-y-4 overflow-y-auto pr-2"
           onScroll={event => sessionStorage.setItem(scrollKey, String(event.currentTarget.scrollTop))}>
-          {supported.length > 0 && <details className="rounded-md border p-3">
+          {!showGuide && supported.length > 0 && <details className="rounded-md border p-3">
             <summary>已有原文支持（{supported.length}）{draft.outline === null && " · 可选追问"}</summary>
             {supported.map(({row, index}) => {
               const choice = draft.edits.reviews[index];
@@ -142,8 +160,8 @@ export function InterviewPrepPanel({candidateId, jobId, name}: {candidateId: str
               </section>;
             })}
           </details>}
-          {draft.outline !== null ? <>
-            {draft.outline.length === 0 && <p>本次没有待核实的问题。</p>}
+          {showGuide ? <InterviewQuestionGuide prep={draft}/> : draft.outline !== null ? <>
+            {draft.outline.length === 0 && <p>当前提纲没有可生成的问题。</p>}
             <ol className="list-decimal space-y-4 pl-5">{draft.outline.map((q,i) => {
               const row = q.requirement_id === null ? null : draft.evidence[q.requirement_id];
               return <li key={i}><strong className="whitespace-pre-wrap">{q.text}</strong>
@@ -181,6 +199,9 @@ export function InterviewPrepPanel({candidateId, jobId, name}: {candidateId: str
             <Button variant="outline" onClick={() => edit({...draft.edits, manual_questions:[...draft.edits.manual_questions,""]})}>添加问题</Button>
           </fieldset>}
         </div>}
+        {draft?.outline && draft.outline.length > 0 && (showGuide
+          ? <Button variant="outline" onClick={() => setShowGuide(false)}>返回面试提纲</Button>
+          : <Button disabled={busy} onClick={viewGuide}>{draft.question_guide ? "查看面试提问稿" : "根据提纲生成面试问题"}</Button>)}
         {draft && draft.outline === null && <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
           <span role="status" className="text-muted-foreground">{saving ? "正在保存…" : error ? "" : "草稿已保存"}{pending > 0 && ` · ${pending} 项待决定`}</span>
           {error && !conflict && <Button variant="outline" onClick={() => void flush()}>重试保存</Button>}

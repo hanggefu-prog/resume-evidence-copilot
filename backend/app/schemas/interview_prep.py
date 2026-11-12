@@ -31,6 +31,17 @@ class Question(BaseModel):
     reason: str | None = None
 
 
+class FollowUp(BaseModel):
+    condition: str = Field(pattern=r"\S")
+    question: str = Field(pattern=r"\S")
+
+
+class GuideItem(BaseModel):
+    outline_index: int = Field(ge=0)
+    main_question: str = Field(pattern=r"\S")
+    follow_ups: list[FollowUp] = Field(min_length=2, max_length=2)
+
+
 class PrepRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -39,3 +50,4 @@ class PrepRead(BaseModel):
     evidence: list[RequirementEvidence]
     edits: Edits
     outline: list[Question] | None
+    question_guide: list[GuideItem] | None

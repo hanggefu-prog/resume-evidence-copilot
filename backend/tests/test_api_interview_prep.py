@@ -88,6 +88,31 @@ def test_empty_outline_without_model_call(client, mock_llm):
     )
     assert response.status_code == 200, response.text
     assert response.json()["outline"] == []
+    assert client.post(f"/interview-prep/{draft['id']}/question-guide").status_code == 422
+
+
+def test_manual_guide_retries_then_concurrent_reads_reuse_result(client, mock_llm):
+    url, draft = prepare(client, mock_llm, [])
+    path = "/interview-prep/" + draft["id"]
+    manual = " 哪次决定由你主导？ "
+    edits = {"reviews": {}, "manual_questions": [manual]}
+    assert client.put(path, json={"version": 1, "edits": edits}).status_code == 200
+    outline = client.post(path + "/generate", json={"version": 2}).json()["outline"]
+    mock_llm.responses.extend(['{"groups":[]}'] * 3)
+    assert client.post(path + "/question-guide").status_code == 422
+    assert client.post(url).json()["outline"] == outline
+    mock_llm.responses.append(json.dumps({"groups": [{
+        "outline_index": 0, "main_question": "模型改写",
+        "follow_ups": [{"condition": "提到方案", "question": "考虑过哪些选项？"},
+                       {"condition": "提到结果", "question": "如何验证？"}],
+    }]}))
+    with ThreadPoolExecutor(2) as pool:
+        requests = [pool.submit(client.post, path + "/question-guide") for _ in range(2)]
+        responses = [future.result() for future in requests]
+    assert all(r.status_code == 200 for r in responses)
+    assert responses[0].json() == responses[1].json() == client.post(url).json()
+    assert responses[0].json()["question_guide"][0]["main_question"] == manual
+    assert len(mock_llm.calls) == 4
 
 
 def test_optional_followup_on_supported_quote(client, mock_llm):

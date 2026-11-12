@@ -79,6 +79,11 @@ export interface PrepEdits {
 }
 
 export interface InterviewPrep {
+  question_guide: {
+    outline_index: number;
+    main_question: string;
+    follow_ups: { condition: string; question: string }[];
+  }[] | null;
   id: string;
   version: number;
   evidence: RequirementEvidence[];
@@ -130,6 +135,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   prep: {
+    questionGuide: (id: string) =>
+      request<InterviewPrep>(`/interview-prep/${id}/question-guide`, { method: "POST" }),
     open: (candidate: string, job: string) =>
       request<InterviewPrep>(`/interview-prep/open/${candidate}/${job}`, { method: "POST" }),
     save: (id: string, version: number, edits: PrepEdits) =>
